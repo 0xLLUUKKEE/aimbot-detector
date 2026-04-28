@@ -30,6 +30,7 @@ DEMO_FILES = [
     ("demo20260306_2316_local_ac_lainio_10min_DM.json", {0: False, 1: False, 2: False, 3: False, 4: False, 5: False}),
     ("demo20260306_2331_local_ac_scaffold_10min_DM.json", {0: False, 1: False, 2: False, 3: False, 4: False, 5: False}),
     ("demo20260306_2341_local_ac_scaffold_10min_DM..json", {0: False, 1: False, 2: False, 3: False, 4: False, 5: False}),
+    #---------------------------------
     # Full cheating matches
     ("demo20260322_2024_local_ac_scaffold_10min_DM.json", {0: True, 1: True, 2: True}),
     ("demo20260322_2042_local_ac_desert3_10min_DM.json", {0: True, 1: True, 2: True}),
@@ -44,6 +45,7 @@ DEMO_FILES = [
     ("demo20260423_2146_local_ac_desert_10min_DM.json", {0: True, 1: True, 2: True}),
     ("demo20260423_2156_local_ac_lainio_10min_DM.json", {0: True, 1: True, 2: True}),
     ("demo20260423_2206_local_ac_elevation_10min_DM.json", {0: True, 1: True, 2: True}),
+    #---------------------------------
 
     # Mixed matches (one cheater, rest clean)
     ("demo20260325_1513_local_ac_desert3_10min_DM.json", {0: True, 1: False, 2: False, 3: False}),
