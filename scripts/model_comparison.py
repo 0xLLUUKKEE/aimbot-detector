@@ -28,14 +28,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import joblib
-
-# XGBoost may need installation: pip install xgboost
-try:
-    import xgboost as xgb
-    XGB_AVAILABLE = True
-except ImportError:
-    XGB_AVAILABLE = False
-    print("XGBoost not installed, skipping XGBoost.")
+import xgboost as xgb
 
 warnings.filterwarnings('ignore')
 
@@ -402,11 +395,11 @@ def main():
 
     models_results = {
         'Logistic Regression': {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
-        'Random Forest': {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
-        'XGBoost': {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
-        '1D-CNN': {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
-        'LSTM': {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
-        'Simple Average': {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]}
+        'Random Forest':       {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
+        'XGBoost':             {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
+        '1D-CNN':              {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
+        'LSTM':                {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]},
+        'Simple Average':      {'acc':[], 'prec':[], 'rec':[], 'f1':[], 'time':[]}
     }
     rf_importances = []; xgb_importances = []
 
@@ -454,26 +447,21 @@ def main():
         rf_importances.append(best_rf.feature_importances_)
 
         # XGBoost
-        xgb_proba = None
-        if XGB_AVAILABLE:
-            start = time.time()
-            xgb_model = xgb.XGBClassifier(eval_metric='logloss', random_state=RANDOM_SEED)
-            param_grid_xgb = {'n_estimators': [50,100], 'max_depth': [3,5]}
-            best_xgb = GridSearchCV(xgb_model, param_grid_xgb, cv=3, scoring='f1').fit(X_train_stat_s, y_train).best_estimator_
-            xgb_proba = best_xgb.predict_proba(X_val_stat_s)[:,1]
-            xgb_preds = (xgb_proba >= 0.5).astype(int)
-            models_results['XGBoost']['acc'].append(accuracy_score(y_val, xgb_preds))
-            models_results['XGBoost']['prec'].append(precision_score(y_val, xgb_preds, zero_division=0))
-            models_results['XGBoost']['rec'].append(recall_score(y_val, xgb_preds, zero_division=0))
-            models_results['XGBoost']['f1'].append(f1_score(y_val, xgb_preds, zero_division=0))
-            models_results['XGBoost']['time'].append(time.time() - start)
-            xgb_importances.append(best_xgb.feature_importances_)
-        else:
-            for metric in ['acc','prec','rec','f1','time']:
-                models_results['XGBoost'][metric].append(float('nan'))
+        start = time.time()
+        xgb_model = xgb.XGBClassifier(eval_metric='logloss', random_state=RANDOM_SEED)
+        param_grid_xgb = {'n_estimators': [50,100], 'max_depth': [3,5]}
+        best_xgb = GridSearchCV(xgb_model, param_grid_xgb, cv=3, scoring='f1').fit(X_train_stat_s, y_train).best_estimator_
+        xgb_proba = best_xgb.predict_proba(X_val_stat_s)[:,1]
+        xgb_preds = (xgb_proba >= 0.5).astype(int)
+        models_results['XGBoost']['acc'].append(accuracy_score(y_val, xgb_preds))
+        models_results['XGBoost']['prec'].append(precision_score(y_val, xgb_preds, zero_division=0))
+        models_results['XGBoost']['rec'].append(recall_score(y_val, xgb_preds, zero_division=0))
+        models_results['XGBoost']['f1'].append(f1_score(y_val, xgb_preds, zero_division=0))
+        models_results['XGBoost']['time'].append(time.time() - start)
+        xgb_importances.append(best_xgb.feature_importances_)
 
         # Simple Average
-        avg_proba = (lr_proba + rf_proba + (xgb_proba if xgb_proba is not None else 0)) / (3 if xgb_proba is not None else 2)
+        avg_proba = (lr_proba + rf_proba + xgb_proba) / 3.0
         avg_preds = (avg_proba >= 0.5).astype(int)
         models_results['Simple Average']['acc'].append(accuracy_score(y_val, avg_preds))
         models_results['Simple Average']['prec'].append(precision_score(y_val, avg_preds, zero_division=0))
@@ -524,7 +512,7 @@ def main():
 
         print(f"Fold {fold_num} results:")
         for name, m in models_results.items():
-            if len(m['f1'])>0 and not np.isnan(m['f1'][-1]):
+            if len(m['f1'])>0:
                 print(f"  {name:20s}: Acc={m['acc'][-1]:.3f}, F1={m['f1'][-1]:.3f}")
 
     # --- Final summary ---
@@ -532,11 +520,9 @@ def main():
     print("Final Comparison (averaged over folds)")
     print("="*60)
     for name, m in models_results.items():
-        f1s = [v for v in m['f1'] if not np.isnan(v)]
+        f1s = m['f1']
         if not f1s: continue
-        accs = [v for v in m['acc'] if not np.isnan(v)]
-        precs = [v for v in m['prec'] if not np.isnan(v)]
-        recs = [v for v in m['rec'] if not np.isnan(v)]
+        accs = m['acc']; precs = m['prec']; recs = m['rec']
         print(f"\n{name}:")
         print(f"  Accuracy : {np.mean(accs):.3f} (+/- {np.std(accs):.3f})")
         print(f"  Precision: {np.mean(precs):.3f} (+/- {np.std(precs):.3f})")
@@ -544,7 +530,7 @@ def main():
         print(f"  F1-score : {np.mean(f1s):.3f} (+/- {np.std(f1s):.3f})")
 
     # Boxplot
-    model_names = [n for n in models_results if any(not np.isnan(v) for v in models_results[n]['f1'])]
+    model_names = list(models_results.keys())
     f1_data = [models_results[n]['f1'] for n in model_names]
     plt.figure(figsize=(10,6))
     plt.boxplot(f1_data, tick_labels=model_names)
@@ -583,7 +569,7 @@ def main():
         plt.xlabel('Importance'); plt.title('Random Forest Feature Importances (avg over folds)'); plt.tight_layout()
         plt.savefig('rf_feature_importance.png'); plt.show()
 
-    if XGB_AVAILABLE and xgb_importances:
+    if xgb_importances:
         avg_xgb = np.mean(xgb_importances, axis=0)
         idx = np.argsort(avg_xgb)[::-1][:20]
         plt.figure(figsize=(10,6)); plt.barh(range(len(idx)), avg_xgb[idx]); plt.yticks(range(len(idx)), [all_feat_names[i] for i in idx])
@@ -608,9 +594,8 @@ def main():
     joblib.dump(final_scaler, 'models/scaler.pkl')
 
     # XGBoost
-    if XGB_AVAILABLE:
-        final_xgb = xgb.XGBClassifier(eval_metric='logloss', random_state=RANDOM_SEED).fit(X_stat_all_s, y)
-        joblib.dump(final_xgb, 'models/xgb_model.pkl')
+    final_xgb = xgb.XGBClassifier(eval_metric='logloss', random_state=RANDOM_SEED).fit(X_stat_all_s, y)
+    joblib.dump(final_xgb, 'models/xgb_model.pkl')
 
     # CNN final (retrain on all raw padded)
     cnn_final = Simple1DCNN(len(FEATURE_NAMES), FIXED_LEN).to(device)

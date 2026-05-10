@@ -1,145 +1,254 @@
-# toggling_all_models.py
+# toggling_multi_match.py
 """
-Sliding‑window analysis of a toggling match using ALL trained models.
-Compares Logistic Regression, Random Forest, XGBoost, and their
-simple average ensemble. Produces a single overlaid probability plot.
+Sliding‑window analysis on three held‑out matches:
+  - toggling match
+  - full cheat match
+  - full clean match
+Uses the final classical models + simple average ensemble.
+Saves one figure per match.
 """
 
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-import joblib
+import os, joblib, numpy as np, matplotlib.pyplot as plt, torch
+
 from utils import *
 
+# ------------------------------
+# CONFIG – list of (demo_path, cheater_cn, match_label)
+# ------------------------------
+
 #TOGGLING_DEMO_PATH = "demo20260423_2206_local_ac_elevation_10min_DM.json"   # your toggling match
-# -----------------------------------------------------------------------------
-# Configuration 
-# -----------------------------------------------------------------------------
 TOGGLING_DEMO_PATH = "data/demo20260309_2217_local_ac_lainio_10min_DM.json"   # toggling match file
 #TOGGLING_DEMO_PATH = "demo20260322_2136_local_ac_scaffold_10min_DM.json"   # Full cheat match
-CHEATER_CN = 1                              # client number of the player who toggles
-WINDOW_MS = 30000                            # 30 seconds
-STRIDE_MS = 5000                             # 5 seconds for denser curve
 
-# Paths to saved models
+MATCHES = [
+    ("data/demo20260309_2217_local_ac_lainio_10min_DM.json", 3, "toggling"),
+    ("demo20260322_2136_local_ac_scaffold_10min_DM.json", 0, "full_cheat"),
+    ("data/demo20260309_2147_local_ac_desert3_10min_DM.json", 0, "full_clean"),   
+]
+CHEATER_CN = 1                              # client number of the player who toggles
+WINDOW_MS = 30_000
+STRIDE_MS = 5_000
+
+# Paths to saved classical models & scaler
 MODEL_DIR = "models"
 SCALER_PATH = os.path.join(MODEL_DIR, "scaler.pkl")
 LR_PATH     = os.path.join(MODEL_DIR, "lr_model.pkl")
 RF_PATH     = os.path.join(MODEL_DIR, "rf_model.pkl")
 XGB_PATH    = os.path.join(MODEL_DIR, "xgb_model.pkl")
 
-# (Optional) known toggle times in gametime (ms) – set to None if unknown
-TOGGLE_ON  = None   # e.g., 120000
-TOGGLE_OFF = None   # e.g., 360000
+# Paths to saved deep models & normalisation
+CNN_PATH    = os.path.join(MODEL_DIR, "cnn_final.pth")
+LSTM_PATH   = os.path.join(MODEL_DIR, "lstm_final.pth")
+LSTM_NORM   = os.path.join(MODEL_DIR, "lstm_norm.npz")
+
+FIXED_LEN = 2000   # for CNN
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# (Optional) known toggle times (gametime in ms)
+TOGGLE_ON  = None
+TOGGLE_OFF = None
 
 # -----------------------------------------------------------------------------
-# Load scaler and all models
+# Load classical models
 # -----------------------------------------------------------------------------
-print("Loading models...")
-scaler = joblib.load(SCALER_PATH)
-
+scaler   = joblib.load(SCALER_PATH)
 lr_model = joblib.load(LR_PATH)
-print("  Loaded Logistic Regression")
-
 rf_model = joblib.load(RF_PATH)
-print("  Loaded Random Forest")
-
 xgb_model = joblib.load(XGB_PATH)
-print("  Loaded XGBoost")
 
 # -----------------------------------------------------------------------------
-# 1. Load demo and extract the cheater's timeline
+# Load deep models (define classes – must be identical to training)
 # -----------------------------------------------------------------------------
-print(f"Loading toggling match: {TOGGLING_DEMO_PATH}")
-events = load_events(TOGGLING_DEMO_PATH)
-players_events = build_player_timelines(events)
+# Import required classes (copy from model_comparison.py if not already in utils)
+import torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence
 
-if CHEATER_CN not in players_events:
-    raise ValueError(f"Client {CHEATER_CN} not found in demo. Available: {list(players_events.keys())}")
+class Simple1DCNN(nn.Module):
+    def __init__(self, input_channels, seq_len):
+        super().__init__()
+        self.conv1 = nn.Conv1d(input_channels, 32, 5, padding=2)
+        self.conv2 = nn.Conv1d(32, 64, 5, padding=2)
+        self.pool = nn.MaxPool1d(2)
+        self.dropout = nn.Dropout(0.5)
+        self.fc1 = nn.Linear(64 * (seq_len // 4), 128)
+        self.fc2 = nn.Linear(128, 1)
+        self.sigmoid = nn.Sigmoid()
+    def forward(self, x):
+        x = self.pool(torch.relu(self.conv1(x)))
+        x = self.pool(torch.relu(self.conv2(x)))
+        x = x.view(x.size(0), -1)
+        x = self.dropout(torch.relu(self.fc1(x)))
+        return self.sigmoid(self.fc2(x)).squeeze(-1)
 
-cheater_events = players_events[CHEATER_CN]
+class AimDetectorLSTM(nn.Module):
+    def __init__(self, input_size, hidden_size=64, num_layers=2, dropout=0.3):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers,
+                            batch_first=True, dropout=dropout if num_layers>1 else 0,
+                            bidirectional=False)
+        self.fc = nn.Linear(hidden_size, 1)
+        self.sigmoid = nn.Sigmoid()
+    def forward(self, x, mask):
+        lengths = mask.sum(dim=1).cpu()
+        x_packed = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
+        _, (hidden, _) = self.lstm(x_packed)
+        return self.sigmoid(self.fc(hidden[-1])).squeeze(-1)
 
-# Add derived features and aim‑correction features using all players' timelines
-all_players = {cn: evs for cn, evs in players_events.items()}
-cheater_events = add_derived_features(cheater_events)
-cheater_events = compute_aim_correction_features(cheater_events, all_players)
+cnn_model = Simple1DCNN(len(FEATURE_NAMES), FIXED_LEN).to(DEVICE)
+cnn_model.load_state_dict(torch.load(CNN_PATH, map_location=DEVICE))
+cnn_model.eval()
+
+lstm_model = AimDetectorLSTM(len(FEATURE_NAMES)).to(DEVICE)
+lstm_model.load_state_dict(torch.load(LSTM_PATH, map_location=DEVICE))
+lstm_model.eval()
+
+# Load LSTM normalisation statistics
+lstm_norm = np.load(LSTM_NORM)
+lstm_mean = lstm_norm['mean']
+lstm_std  = lstm_norm['std']
+
+print("All models loaded.")
 
 # -----------------------------------------------------------------------------
-# 2. Sliding windows and predictions for each model
+# Helper: process one match for classical models
 # -----------------------------------------------------------------------------
-start_time = cheater_events[0]['gametime']
-end_time   = cheater_events[-1]['gametime']
+def process_match_classical(demo_path, player_cn):
+    events = load_events(demo_path)
+    players_events = build_player_timelines(events)
+    if player_cn not in players_events:
+        raise ValueError(f"Client {player_cn} not found in {demo_path}.")
+    player_ev = players_events[player_cn]
+    all_players = {cn: evs for cn, evs in players_events.items()}
+    player_ev = add_derived_features(player_ev)
+    player_ev = compute_aim_correction_features(player_ev, all_players)
 
-window_starts = []
-lr_probs = []
-rf_probs = []
-xgb_probs = []
-avg_probs = []
-
-cur = start_time
-while cur + WINDOW_MS <= end_time:
-    cur_end = cur + WINDOW_MS
-    window_events = [ev for ev in cheater_events if cur <= ev['gametime'] < cur_end]
-
-    if len(window_events) < 10:
+    start = player_ev[0]['gametime']
+    end   = player_ev[-1]['gametime']
+    lr_p, rf_p, xgb_p, avg_p = [], [], [], []
+    times_min = []
+    cur = start
+    while cur + WINDOW_MS <= end:
+        cur_end = cur + WINDOW_MS
+        window = [e for e in player_ev if cur <= e['gametime'] < cur_end]
+        if len(window) < 10:
+            cur += STRIDE_MS
+            continue
+        seq = np.array([[float(e.get(f, 0.0)) for f in FEATURE_NAMES] for e in window], dtype=np.float32)
+        feat = extract_statistical_features(seq).reshape(1, -1)
+        feat_scaled = scaler.transform(feat)
+        lr_p.append(lr_model.predict_proba(feat_scaled)[0,1])
+        rf_p.append(rf_model.predict_proba(feat_scaled)[0,1])
+        xgb_p.append(xgb_model.predict_proba(feat_scaled)[0,1])
+        avg_p.append((lr_p[-1]+rf_p[-1]+xgb_p[-1])/3)
+        times_min.append((cur - start) / 60_000.0)
         cur += STRIDE_MS
-        continue
-
-    # Build feature matrix for this window
-    seq = np.array([[float(ev.get(feat, 0.0)) for feat in FEATURE_NAMES] for ev in window_events],
-                   dtype=np.float32)
-
-    # Extract statistical features
-    feat_vec = extract_statistical_features(seq).reshape(1, -1)
-
-    # Scale using the same scaler as training
-    feat_scaled = scaler.transform(feat_vec)
-
-    # Predict cheating probability for each model
-    lr_prob = lr_model.predict_proba(feat_scaled)[0, 1]
-    rf_prob = rf_model.predict_proba(feat_scaled)[0, 1]
-    xgb_prob = xgb_model.predict_proba(feat_scaled)[0, 1]
-
-    # Simple average of the three probabilities
-    avg_prob = (lr_prob + rf_prob + xgb_prob) / 3.0
-
-    lr_probs.append(lr_prob)
-    rf_probs.append(rf_prob)
-    xgb_probs.append(xgb_prob)
-    avg_probs.append(avg_prob)
-
-    window_starts.append(cur)
-    cur += STRIDE_MS
+    return times_min, lr_p, rf_p, xgb_p, avg_p, start
 
 # -----------------------------------------------------------------------------
-# 3. Plot all curves together
+# Helper: process one match for deep models (returns probs for CNN and LSTM)
 # -----------------------------------------------------------------------------
-if not window_starts:
-    print("No windows could be created. Check window size and demo length.")
-else:
-    times_sec = [(t - start_time) / 1000.0 for t in window_starts]
-    times_min = [(t - start_time) / 60000.0 for t in window_starts]
+def process_match_deep(demo_path, player_cn):
+    events = load_events(demo_path)
+    players_events = build_player_timelines(events)
+    if player_cn not in players_events:
+        raise ValueError(f"Client {player_cn} not found in {demo_path}.")
+    player_ev = players_events[player_cn]
+    all_players = {cn: evs for cn, evs in players_events.items()}
+    player_ev = add_derived_features(player_ev)
+    player_ev = compute_aim_correction_features(player_ev, all_players)
+
+    start = player_ev[0]['gametime']
+    end   = player_ev[-1]['gametime']
+    cnn_p, lstm_p = [], []
+    times_min = []
+    cur = start
+    while cur + WINDOW_MS <= end:
+        cur_end = cur + WINDOW_MS
+        window = [e for e in player_ev if cur <= e['gametime'] < cur_end]
+        if len(window) < 10:
+            cur += STRIDE_MS
+            continue
+        raw_seq = np.array([[float(e.get(f, 0.0)) for f in FEATURE_NAMES] for e in window], dtype=np.float32)
+
+        # CNN
+        T = raw_seq.shape[0]
+        if T <= FIXED_LEN:
+            padded = np.zeros((FIXED_LEN, len(FEATURE_NAMES)), dtype=np.float32)
+            padded[:T] = raw_seq
+        else:
+            padded = raw_seq[-FIXED_LEN:]
+        cnn_input = torch.tensor(padded.T).unsqueeze(0).to(DEVICE)
+        with torch.no_grad():
+            cnn_prob = cnn_model(cnn_input).item()
+        cnn_p.append(cnn_prob)
+
+        # LSTM
+        norm_seq = (raw_seq - lstm_mean) / lstm_std
+        lstm_input = torch.tensor(norm_seq, dtype=torch.float32).unsqueeze(0).to(DEVICE)
+        mask = torch.ones(1, T, dtype=torch.bool).to(DEVICE)
+        with torch.no_grad():
+            lstm_prob = lstm_model(lstm_input, mask).item()
+        lstm_p.append(lstm_prob)
+
+        times_min.append((cur - start) / 60_000.0)
+        cur += STRIDE_MS
+
+    # ----- diagnostic print (first few values) -----
+    print(f"CNN first 5 probs: {cnn_p[:5]}")
+    print(f"LSTM first 5 probs: {lstm_p[:5]}")
+    return times_min, cnn_p, lstm_p, start
+
+# -----------------------------------------------------------------------------
+# Produce classical and deep plots for each match
+# -----------------------------------------------------------------------------
+output_dir = "results"
+os.makedirs(output_dir, exist_ok=True)
+
+for demo_path, cn, label in MATCHES:
+    print(f"Processing {label} match: {demo_path} (player cn={cn})")
+
+    # ----- Classical -----
+    times, lr_p, rf_p, xgb_p, avg_p, start_time = process_match_classical(demo_path, cn)
     plt.figure(figsize=(14, 7))
-    plt.plot(times_min, lr_probs, label='Logistic Regression', alpha=0.8)
-    plt.plot(times_min, rf_probs, label='Random Forest', alpha=0.8)
-    plt.plot(times_min, xgb_probs, label='XGBoost', alpha=0.8)
-    plt.plot(times_min, avg_probs, label='Simple Average', linewidth=2.5, color='black')
-
-    plt.axhline(0.5, color='red', linestyle='--', label='Decision boundary (0.5)')
-
-    # Optional: mark known toggle events
-    if TOGGLE_ON is not None:
-        plt.axvline((TOGGLE_ON - start_time) / 1000.0, color='green', linestyle=':', label='Toggle ON')
-    if TOGGLE_OFF is not None:
-        plt.axvline((TOGGLE_OFF - start_time) / 1000.0, color='orange', linestyle=':', label='Toggle OFF')
-
-    plt.xlabel('Time (minutes from match start)')
+    plt.plot(times, lr_p, label='Logistic Regression', alpha=0.8)
+    plt.plot(times, rf_p, label='Random Forest', alpha=0.8)
+    plt.plot(times, xgb_p, label='XGBoost', alpha=0.8)
+    plt.plot(times, avg_p, label='Simple Average', linewidth=2.5, color='black')
+    plt.axhline(0.5, color='red', linestyle='--', label='Decision boundary')
+    if label == "toggling" and TOGGLE_ON is not None:
+        plt.axvline((TOGGLE_ON - start_time) / 60_000.0, color='green', linestyle=':', label='Toggle ON')
+    if label == "toggling" and TOGGLE_OFF is not None:
+        plt.axvline((TOGGLE_OFF - start_time) / 60_000.0, color='orange', linestyle=':', label='Toggle OFF')
+    plt.xlabel('Time (minutes)')
     plt.ylabel('Cheating probability')
-    plt.title('Model comparison on a toggling match')
+    plt.title(f'Classical models – {label.replace("_"," ")} match')
     plt.ylim(0, 1)
     plt.grid(True, alpha=0.3)
     plt.legend(loc='upper left')
     plt.tight_layout()
-    plt.savefig('toggling_comparison.png')
+    plt.savefig(os.path.join(output_dir, f"toggling_{label}_classical.png"))
     plt.show()
-    print("Figure saved as toggling_comparison.png")
+
+    # ----- Deep -----
+    # ----- Deep -----
+    times, cnn_p, lstm_p, _ = process_match_deep(demo_path, cn)
+    plt.figure(figsize=(14, 7))
+    # Plot CNN with a dashed line and larger markers so it cannot be missed
+    plt.plot(times, cnn_p, 'o--', label='1D‑CNN', color='cyan', markersize=4, alpha=0.9)
+    plt.plot(times, lstm_p, label='LSTM', color='magenta', alpha=0.8)
+    plt.axhline(0.5, color='red', linestyle='--', label='Decision boundary')
+    if label == "toggling" and TOGGLE_ON is not None:
+        plt.axvline((TOGGLE_ON - start_time) / 60_000.0, color='green', linestyle=':', label='Toggle ON')
+    if label == "toggling" and TOGGLE_OFF is not None:
+        plt.axvline((TOGGLE_OFF - start_time) / 60_000.0, color='orange', linestyle=':', label='Toggle OFF')
+    plt.xlabel('Time (minutes)')
+    plt.ylabel('Cheating probability')
+    plt.title(f'Deep models – {label.replace("_"," ")} match')
+    plt.ylim(0, 1)
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc='upper left')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"toggling_{label}_deep.png"))
+    plt.show()
+
+print("All plots saved in results/")
