@@ -71,10 +71,15 @@ DEMO_FILES = [
 ]
 
 FEATURE_NAMES = [
-    'x', 'y', 'z', 'yaw', 'pitch',
-    'dx', 'dy', 'dz', 'dyaw', 'dpitch', 'shooting',
-    'min_angle_to_enemy', 'aim_correction_delta'
+    # Removed x, y, z to avoid map bias – keep their deltas (dx, dy, dz)
+    'yaw', 'pitch',
+    'dx', 'dy', 'dz',
+    'dyaw', 'dpitch',
+    'shooting',
+    'min_angle_to_enemy',   # smallest angle to any other player
+    'aim_correction_delta'  # angular difference to closest enemy
 ]
+
 
 RANDOM_SEED = 42
 K_FOLDS = 5
@@ -188,6 +193,11 @@ def build_full_sequence(player_events, all_players_events, is_cheater):
     return np.array(seq, dtype=np.float32), 1 if is_cheater else 0
 
 def extract_statistical_features(seq):
+    """
+    seq: np.array of shape (T, F) – variable length, F = len(FEATURE_NAMES).
+    Returns a fixed-length feature vector (1D array).
+    """
+    # Basic statistics per feature
     mean = np.mean(seq, axis=0)
     std = np.std(seq, axis=0)
     min_val = np.min(seq, axis=0)
@@ -195,23 +205,42 @@ def extract_statistical_features(seq):
     median = np.median(seq, axis=0)
     p5 = np.percentile(seq, 5, axis=0)
     p95 = np.percentile(seq, 95, axis=0)
+
+    # Temporal features (autocorrelation of dyaw, dpitch)
     if seq.shape[0] >= 2:
-        dyaw_series = seq[1:, 8]; dyaw_lag = seq[:-1, 8]
-        ac_dyaw = np.corrcoef(dyaw_lag, dyaw_series)[0,1] if np.std(dyaw_lag)>0 else 0.0
-        dpitch_series = seq[1:, 9]; dpitch_lag = seq[:-1, 9]
-        ac_dpitch = np.corrcoef(dpitch_lag, dpitch_series)[0,1] if np.std(dpitch_lag)>0 else 0.0
+        # Indices in new FEATURE_NAMES:
+        # dyaw = index 5, dpitch = index 6
+        dyaw_series = seq[1:, 5]   # shift by 1
+        dyaw_lag = seq[:-1, 5]
+        ac_dyaw = np.corrcoef(dyaw_lag, dyaw_series)[0, 1] if np.std(dyaw_lag) > 0 else 0.0
+
+        dpitch_series = seq[1:, 6]
+        dpitch_lag = seq[:-1, 6]
+        ac_dpitch = np.corrcoef(dpitch_lag, dpitch_series)[0, 1] if np.std(dpitch_lag) > 0 else 0.0
     else:
         ac_dyaw = ac_dpitch = 0.0
-    shooting = seq[:, 10]
+
+    # Shooting behaviour – index 7
+    shooting = seq[:, 7]
     frac_shooting = np.mean(shooting)
     shooting_events = np.sum(np.diff(shooting) > 0.5)
-    total_dist = np.sum(np.sqrt(seq[:,5]**2 + seq[:,6]**2 + seq[:,7]**2))
-    duration = len(seq)*0.04
+
+    # Average speed from dx,dy,dz – indices 2,3,4
+    total_dist = np.sum(np.sqrt(seq[:, 2]**2 + seq[:, 3]**2 + seq[:, 4]**2))
+    duration = len(seq) * 0.04   # approx 40ms per tick
     avg_speed = total_dist / duration if duration > 0 else 0.0
-    max_aim_corr = np.max(seq[:, 12])
-    aim_on_target = np.mean(seq[:, 12] < 10.0)
-    return np.concatenate([mean, std, min_val, max_val, median, p5, p95,
-                           [ac_dyaw, ac_dpitch, frac_shooting, shooting_events, avg_speed, max_aim_corr, aim_on_target]])
+
+    # Aim‑correction delta – index 9
+    max_aim_corr = np.max(seq[:, 9])
+    aim_on_target = np.mean(seq[:, 9] < 10.0)
+
+    # Concatenate all features
+    features = np.concatenate([
+        mean, std, min_val, max_val, median, p5, p95,
+        [ac_dyaw, ac_dpitch, frac_shooting, shooting_events,
+         avg_speed, max_aim_corr, aim_on_target]
+    ])
+    return features
 
 # -----------------------------------------------------------------------------
 # 1D-CNN Model

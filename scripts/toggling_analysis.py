@@ -21,7 +21,8 @@ TOGGLING_DEMO_PATH = "data/demo20260309_2217_local_ac_lainio_10min_DM.json"   # 
 #TOGGLING_DEMO_PATH = "demo20260322_2136_local_ac_scaffold_10min_DM.json"   # Full cheat match
 
 MATCHES = [
-    ("data/demo20260309_2217_local_ac_lainio_10min_DM.json", 3, "toggling"),
+    ("data/demo20260510_1926_local_ac_scaffold_10min_DM.json", 2, "toggling"),
+    #("data/demo20260309_2217_local_ac_lainio_10min_DM.json", 3, "toggling"),
     ("demo20260322_2136_local_ac_scaffold_10min_DM.json", 0, "full_cheat"),
     ("data/demo20260309_2147_local_ac_desert3_10min_DM.json", 0, "full_clean"),   
 ]
