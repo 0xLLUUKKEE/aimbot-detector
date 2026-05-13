@@ -556,7 +556,7 @@
 {'cn': 1, 'type': 'position', 'x': 640, 'y': 1472, 'z': -32, 'yaw': 93.515625, 'pitch': 0.0, 'scoping': 0, 'shooting': 0, 'gametime': 20207}
 {'cn': 1, 'type': 'position', 'x': 640, 'y': 1472, 'z': -32, 'yaw': 93.515625, 'pitch': 0.0, 'scoping': 0, 'shooting': 0, 'gametime': 20247}
 {'type': 'SV_FORCEDEATH', 'error': 'unhandled'}
-{'type': 'newplayer', 'cn': 3, 'name': 'NARTINGFIGGER', 'skin1': 0, 'skin2': 0, 'team': 4, 'gametime': 20285}
+{'type': 'newplayer', 'cn': 3, 'name': 'redacted', 'skin1': 0, 'skin2': 0, 'team': 4, 'gametime': 20285}
 {'cn': 1, 'type': 'position', 'x': 644, 'y': 1472, 'z': -32, 'yaw': 93.515625, 'pitch': 0.0, 'scoping': 0, 'shooting': 0, 'gametime': 20287}
 {'cn': 1, 'type': 'position', 'x': 649, 'y': 1472, 'z': -32, 'yaw': 93.515625, 'pitch': 0.0, 'scoping': 0, 'shooting': 0, 'gametime': 20324}
 {'cn': 1, 'type': 'position', 'x': 656, 'y': 1473, 'z': -32, 'yaw': 93.515625, 'pitch': 0.0, 'scoping': 0, 'shooting': 0, 'gametime': 20364}
@@ -5210,7 +5210,7 @@
 {'type': 'SV_FORCEDEATH', 'error': 'unhandled'}
 {'type': 'SV_RESUME', 'error': 'unhandled'}
 {'type': 'SV_DISCSCORES', 'error': 'unhandled'}
-{'type': 'newplayer', 'cn': 3, 'name': 'NARTINGFIGGER', 'skin1': 1, 'skin2': 0, 'team': 4, 'gametime': 188268}
+{'type': 'newplayer', 'cn': 3, 'name': 'redacted', 'skin1': 1, 'skin2': 0, 'team': 4, 'gametime': 188268}
 {'cn': 0, 'type': 'position', 'x': 701, 'y': 795, 'z': -18, 'yaw': 62.578125, 'pitch': -14.173228346456693, 'scoping': 0, 'shooting': 0, 'gametime': 188285}
 {'cn': 0, 'type': 'position', 'x': 687, 'y': 788, 'z': -6, 'yaw': 62.578125, 'pitch': -14.881889763779528, 'scoping': 0, 'shooting': 0, 'gametime': 188323}
 {'cn': 0, 'type': 'position', 'x': 672, 'y': 781, 'z': 4, 'yaw': 64.6875, 'pitch': -16.299212598425196, 'scoping': 0, 'shooting': 0, 'gametime': 188367}
